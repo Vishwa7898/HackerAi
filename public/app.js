@@ -1,11 +1,8 @@
 const form = document.querySelector('#chat-form');
 const input = document.querySelector('#message-input');
-const imageInput = document.querySelector('#image-input');
-const imagePreview = document.querySelector('#image-preview');
-const imagePreviewImage = document.querySelector('#image-preview-img');
-const imagePreviewName = document.querySelector('#image-preview-name');
-const attachImageButton = document.querySelector('#attach-image-button');
-const removeImageButton = document.querySelector('#remove-image-button');
+const fileInput = document.querySelector('#file-input');
+const attachmentPreview = document.querySelector('#attachment-preview');
+const attachFileButton = document.querySelector('#attach-file-button');
 const sendButton = document.querySelector('#send-button');
 const charCount = document.querySelector('#char-count');
 const welcome = document.querySelector('#welcome');
@@ -31,8 +28,26 @@ function loadConversations() {
         message
         && ['user', 'assistant'].includes(message.role)
         && typeof message.content === 'string'
+        && (message.attachments === undefined || (Array.isArray(message.attachments)
+          && message.attachments.every((attachment) => attachment
+            && typeof attachment.name === 'string'
+            && typeof attachment.kind === 'string'
+            && (typeof attachment.text === 'string' || typeof attachment.data === 'string'))))
       )
-    );
+    ).map((conversation) => ({
+      ...conversation,
+      messages: conversation.messages.map((message) => message.image && !message.attachments
+        ? {
+          ...message,
+          attachments: [{
+            id: 'legacy-image',
+            kind: 'image',
+            name: message.imageName || 'image.jpg',
+            data: message.image
+          }]
+        }
+        : message)
+    }));
   } catch (error) {
     showToast(`Could not load chat history: ${error.message}`);
     return [];
@@ -42,11 +57,23 @@ function loadConversations() {
 let conversations = loadConversations();
 let activeConversationId = conversations[0]?.id || null;
 let isSending = false;
-let selectedImage = null;
+let selectedAttachments = [];
+const textExtensions = new Set([
+  'js', 'mjs', 'cjs', 'jsx', 'ts', 'tsx', 'json', 'jsonc', 'html', 'htm', 'css', 'scss', 'sass',
+  'less', 'md', 'mdx', 'txt', 'rst', 'py', 'pyi', 'java', 'kt', 'kts', 'scala', 'groovy', 'c',
+  'h', 'cc', 'cpp', 'hpp', 'cs', 'fs', 'go', 'rs', 'php', 'rb', 'swift', 'sql', 'sh', 'bash',
+  'zsh', 'ps1', 'psm1', 'bat', 'cmd', 'yml', 'yaml', 'toml', 'xml', 'csv', 'ini', 'cfg', 'conf',
+  'env', 'properties', 'dockerfile', 'makefile', 'gitignore', 'gitattributes', 'editorconfig',
+  'gradle', 'kt', 'vue', 'svelte', 'astro', 'graphql', 'gql', 'ipynb'
+]);
 
 function saveConversations() {
   try {
-    localStorage.setItem(storageKey, JSON.stringify(conversations));
+    const savedConversations = conversations.map((conversation) => ({
+      ...conversation,
+      messages: conversation.messages.filter((message) => !message.attachments?.some((attachment) => attachment.kind === 'pdf'))
+    }));
+    localStorage.setItem(storageKey, JSON.stringify(savedConversations));
     return true;
   } catch (error) {
     showToast(`Could not save chat history: ${error.message}`);
@@ -86,7 +113,7 @@ function renderConversation() {
   const conversation = activeConversation();
   messageList.replaceChildren();
   welcome.hidden = Boolean(conversation?.messages.length);
-  conversation?.messages.forEach(({ role, content, image, imageName }) => addMessage(role, content, false, image, imageName));
+  conversation?.messages.forEach(({ role, content, attachments }) => addMessage(role, content, false, attachments));
   renderHistory();
 }
 
@@ -239,7 +266,7 @@ function showToast(message) {
   toastTimer = setTimeout(() => toast.classList.remove('visible'), 4500);
 }
 
-function addMessage(role, content, pending = false, image = null, imageName = '') {
+function addMessage(role, content, pending = false, attachments = []) {
   const row = document.createElement('div');
   row.className = `message ${role}${pending ? ' pending' : ''}`;
 
@@ -249,12 +276,27 @@ function addMessage(role, content, pending = false, image = null, imageName = ''
 
   const text = document.createElement('div');
   text.className = 'message-content';
-  if (image && /^data:image\/(?:jpeg|png|webp);base64,[a-z\d+/]+=*$/i.test(image)) {
-    const preview = document.createElement('img');
-    preview.className = 'message-image';
-    preview.src = image;
-    preview.alt = imageName ? `Attached image: ${imageName}` : 'Attached image';
-    text.append(preview);
+  if (attachments.length) {
+    const fileList = document.createElement('div');
+    fileList.className = 'message-attachments';
+    attachments.forEach((attachment) => {
+      const fileItem = document.createElement('div');
+      fileItem.className = `message-attachment${attachment.kind === 'image' ? ' has-image' : ''}`;
+      if (attachment.kind === 'image' && typeof attachment.data === 'string'
+        && /^data:image\/jpeg;base64,[a-z\d+/]+=*$/i.test(attachment.data)) {
+        const preview = document.createElement('img');
+        preview.className = 'message-image';
+        preview.src = attachment.data;
+        preview.alt = `Attached image: ${attachment.name}`;
+        fileItem.append(preview);
+      }
+      const name = document.createElement('span');
+      name.className = 'message-attachment-name';
+      name.textContent = attachment.name;
+      fileItem.append(name);
+      fileList.append(fileItem);
+    });
+    text.append(fileList);
   }
   if (role === 'assistant' && !pending) {
     text.classList.add('markdown-body');
@@ -280,19 +322,39 @@ function resizeInput() {
   charCount.textContent = `${input.value.length} / 4000`;
 }
 
-function clearSelectedImage() {
-  selectedImage = null;
-  imageInput.value = '';
-  imagePreview.hidden = true;
-  imagePreviewImage.removeAttribute('src');
-  imagePreviewName.textContent = '';
-}
-
-function showSelectedImage(image) {
-  selectedImage = image;
-  imagePreviewImage.src = image.data;
-  imagePreviewName.textContent = image.name;
-  imagePreview.hidden = false;
+function renderSelectedAttachments() {
+  attachmentPreview.replaceChildren();
+  attachmentPreview.hidden = selectedAttachments.length === 0;
+  selectedAttachments.forEach((attachment, index) => {
+    const item = document.createElement('div');
+    item.className = 'attachment-chip';
+    if (attachment.kind === 'image') {
+      const image = document.createElement('img');
+      image.src = attachment.data;
+      image.alt = '';
+      item.append(image);
+    } else {
+      const icon = document.createElement('span');
+      icon.className = 'attachment-file-icon';
+      icon.textContent = attachment.kind === 'pdf' ? 'PDF' : 'FILE';
+      item.append(icon);
+    }
+    const name = document.createElement('span');
+    name.className = 'attachment-chip-name';
+    name.textContent = attachment.name;
+    item.append(name);
+    const remove = document.createElement('button');
+    remove.className = 'remove-image-button';
+    remove.type = 'button';
+    remove.textContent = '×';
+    remove.setAttribute('aria-label', `Remove ${attachment.name}`);
+    remove.addEventListener('click', () => {
+      selectedAttachments.splice(index, 1);
+      renderSelectedAttachments();
+    });
+    item.append(remove);
+    attachmentPreview.append(item);
+  });
 }
 
 function readFileAsDataUrl(file) {
@@ -311,8 +373,10 @@ function readFileAsDataUrl(file) {
 }
 
 async function prepareImage(file) {
-  if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
-    throw new Error('Choose a JPG, PNG, or WebP image.');
+  const extension = file.name.toLowerCase().split('.').pop();
+  if (!['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/bmp', 'image/avif'].includes(file.type)
+    && !['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp', 'avif'].includes(extension)) {
+    throw new Error('Choose a JPG, PNG, WebP, GIF, BMP, or AVIF image.');
   }
   if (file.size > 10 * 1024 * 1024) {
     throw new Error('Choose an image smaller than 10 MB.');
@@ -339,19 +403,38 @@ async function prepareImage(file) {
     quality -= 0.1;
   }
   if (data.length > 700_000) throw new Error('This image is too large to attach. Choose a smaller image.');
-  return { data, name: file.name.slice(0, 160) || 'image.jpg' };
+  return { id: crypto.randomUUID(), kind: 'image', data, name: file.name.slice(0, 160) || 'image.jpg' };
+}
+
+async function prepareFile(file) {
+  const name = file.name.replace(/[\\/]/g, '_').slice(0, 160) || 'attachment';
+  const extension = name.toLowerCase().split('.').pop();
+  if (file.type.startsWith('image/') || ['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp', 'avif'].includes(extension)) return prepareImage(file);
+  if (extension === 'pdf' && (!file.type || file.type === 'application/pdf')) {
+    if (file.size > 5 * 1024 * 1024) throw new Error(`${name} exceeds the 5 MB PDF limit.`);
+    return { id: crypto.randomUUID(), kind: 'pdf', data: await readFileAsDataUrl(file), name };
+  }
+  if (!textExtensions.has(extension)) {
+    throw new Error(`${name} is not a supported image, PDF, or code/text file.`);
+  }
+  if (file.size > 512 * 1024) throw new Error(`${name} exceeds the 512 KB per-file text limit.`);
+  const text = await file.text();
+  if (text.includes('\u0000')) throw new Error(`${name} is binary. Only readable text/code files are supported.`);
+  return { id: crypto.randomUUID(), kind: 'text', text, name };
 }
 
 async function sendMessage(value) {
   const content = value.trim();
-  if ((!content && !selectedImage) || isSending) return;
+  if ((!content && !selectedAttachments.length) || isSending) return;
 
   let conversation = activeConversation();
   const isNewConversation = !conversation;
   if (!conversation) {
     conversation = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
-      title: (content || 'Image question').length > 42 ? `${(content || 'Image question').slice(0, 39)}...` : (content || 'Image question'),
+      title: (content || selectedAttachments[0]?.name || 'File question').length > 42
+        ? `${(content || selectedAttachments[0]?.name || 'File question').slice(0, 39)}...`
+        : (content || selectedAttachments[0]?.name || 'File question'),
       messages: [],
       updatedAt: Date.now()
     };
@@ -359,23 +442,25 @@ async function sendMessage(value) {
     activeConversationId = conversation.id;
   }
 
-  const attachedImage = selectedImage;
+  const attachments = selectedAttachments;
   isSending = true;
   conversation.messages.push({
     role: 'user',
     content,
-    ...(attachedImage ? { image: attachedImage.data, imageName: attachedImage.name } : {})
+    ...(attachments.length ? { attachments } : {})
   });
   conversation.updatedAt = Date.now();
   saveConversations();
   renderHistory();
   welcome.hidden = true;
-  addMessage('user', content, false, attachedImage?.data, attachedImage?.name);
+  addMessage('user', content, false, attachments);
   input.value = '';
   resizeInput();
-  clearSelectedImage();
+  selectedAttachments = [];
+  fileInput.value = '';
+  renderSelectedAttachments();
   sendButton.disabled = true;
-  attachImageButton.disabled = true;
+  attachFileButton.disabled = true;
   newChatButton.disabled = true;
   sendButton.querySelector('span:first-child').textContent = 'Sending';
   const pending = addMessage('assistant', 'Preparing your answer...', true);
@@ -389,6 +474,14 @@ async function sendMessage(value) {
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || 'Could not connect to the AI service.');
 
+    const extractedFiles = new Map((result.extractedFiles || []).map((file) => [file.id, file.text]));
+    conversation.messages.forEach((message) => {
+      message.attachments?.forEach((attachment, index) => {
+        if (extractedFiles.has(attachment.id)) {
+          message.attachments[index] = { id: attachment.id, kind: 'text', name: attachment.name, text: extractedFiles.get(attachment.id) };
+        }
+      });
+    });
     conversation.messages.push({ role: 'assistant', content: result.answer });
     conversation.updatedAt = Date.now();
     saveConversations();
@@ -397,11 +490,10 @@ async function sendMessage(value) {
     pending.row.classList.remove('pending');
   } catch (error) {
     conversation.messages.pop();
-    if (attachedImage) {
-      showSelectedImage(attachedImage);
-      input.value = content;
-      resizeInput();
-    }
+    selectedAttachments = attachments;
+    renderSelectedAttachments();
+    input.value = content;
+    resizeInput();
     if (isNewConversation) {
       conversations = conversations.filter((item) => item.id !== conversation.id);
       activeConversationId = null;
@@ -412,7 +504,7 @@ async function sendMessage(value) {
   } finally {
     isSending = false;
     sendButton.disabled = false;
-    attachImageButton.disabled = false;
+    attachFileButton.disabled = false;
     newChatButton.disabled = false;
     renderHistory();
     sendButton.querySelector('span:first-child').textContent = 'Send';
@@ -433,18 +525,40 @@ input.addEventListener('keydown', (event) => {
   }
 });
 
-attachImageButton.addEventListener('click', () => imageInput.click());
-imageInput.addEventListener('change', async () => {
-  const [file] = imageInput.files || [];
-  if (!file) return;
+attachFileButton.addEventListener('click', () => fileInput.click());
+fileInput.addEventListener('change', async () => {
+  const files = Array.from(fileInput.files || []);
+  fileInput.value = '';
+  if (!files.length) return;
+  if (selectedAttachments.length + files.length > 20) {
+    showToast('Attach up to 20 files per message.');
+    return;
+  }
+  const totalFileBytes = files.reduce((total, file) => total + file.size, 0);
+  if (totalFileBytes > 20 * 1024 * 1024) {
+    showToast('The selected files must total no more than 20 MB before image resizing.');
+    return;
+  }
   try {
-    showSelectedImage(await prepareImage(file));
+    const newAttachments = [];
+    for (const file of files) newAttachments.push(await prepareFile(file));
+    const allAttachments = [...selectedAttachments, ...newAttachments];
+    const textBytes = allAttachments
+      .filter((attachment) => attachment.kind === 'text')
+      .reduce((total, attachment) => total + new TextEncoder().encode(attachment.text).length, 0);
+    if (textBytes > 2 * 1024 * 1024) throw new Error('Text/code attachments must total no more than 2 MB per message.');
+    const textCharacters = allAttachments
+      .filter((attachment) => attachment.kind === 'text')
+      .reduce((total, attachment) => total + attachment.text.length, 0);
+    if (textCharacters > 350_000) throw new Error('Text/code attachments must total no more than 350,000 characters per message.');
+    const encodedBytes = allAttachments.reduce((total, attachment) => total + (attachment.data?.length || 0), 0);
+    if (encodedBytes > 10_000_000) throw new Error('Combined image and PDF uploads must stay under 10 MB per message.');
+    selectedAttachments.push(...newAttachments);
+    renderSelectedAttachments();
   } catch (error) {
-    imageInput.value = '';
     showToast(error.message);
   }
 });
-removeImageButton.addEventListener('click', clearSelectedImage);
 
 document.querySelectorAll('[data-prompt]').forEach((button) => {
   button.addEventListener('click', () => sendMessage(button.dataset.prompt));

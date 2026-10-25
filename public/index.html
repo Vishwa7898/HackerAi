@@ -87,19 +87,15 @@
 
           <div class="composer-wrap">
             <form class="composer" id="chat-form">
-              <div class="image-preview" id="image-preview" hidden>
-                <img id="image-preview-img" alt="Image ready to send">
-                <span class="image-preview-name" id="image-preview-name"></span>
-                <button class="remove-image-button" id="remove-image-button" type="button" aria-label="Remove attached image" title="Remove image">×</button>
-              </div>
+              <div class="attachment-preview" id="attachment-preview" hidden aria-label="Attached files"></div>
               <label class="visually-hidden" for="message-input">Your question</label>
               <textarea id="message-input" rows="1" maxlength="4000" placeholder="Ask about cybersecurity..."></textarea>
-              <input class="visually-hidden" id="image-input" type="file" accept="image/jpeg,image/png,image/webp">
+              <input class="visually-hidden" id="file-input" type="file" multiple accept="image/*,application/pdf,text/plain,.js,.mjs,.cjs,.jsx,.ts,.tsx,.json,.jsonc,.html,.htm,.css,.scss,.sass,.less,.md,.mdx,.txt,.rst,.py,.pyi,.java,.kt,.kts,.scala,.groovy,.c,.h,.cc,.cpp,.hpp,.cs,.fs,.go,.rs,.php,.rb,.swift,.sql,.sh,.bash,.zsh,.ps1,.psm1,.bat,.cmd,.yml,.yaml,.toml,.xml,.csv,.ini,.cfg,.conf,.env,.properties,.gitignore,.gitattributes,.editorconfig,.dockerfile,.makefile,.gradle,.vue,.svelte,.astro,.graphql,.gql,.ipynb">
               <div class="composer-bottom">
-                <span class="composer-hint"><span class="hint-dot"></span> Educational use in labs / CTFs</span>
+                <span class="composer-hint"><span class="hint-dot"></span> Images, PDFs, and up to 20 code/text files</span>
                 <div class="composer-actions">
                   <span class="char-count" id="char-count">0 / 4000</span>
-                  <button class="attach-button" id="attach-image-button" type="button" aria-label="Attach an image" title="Attach an image">＋ Image</button>
+                  <button class="attach-button" id="attach-file-button" type="button" aria-label="Attach files" title="Attach images, PDFs, or code files">＋ Attach files</button>
                   <button class="send-button" id="send-button" type="submit" aria-label="Send question" title="Send">
                     <span>Send</span><span class="send-arrow" aria-hidden="true">↑</span>
                   </button>

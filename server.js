@@ -1,6 +1,7 @@
 const { createServer } = require('node:http');
 const { readFile } = require('node:fs/promises');
 const path = require('node:path');
+const { PDFParse } = require('pdf-parse');
 
 const root = path.join(__dirname, 'public');
 const port = Number(process.env.PORT || 3000);
@@ -9,7 +10,16 @@ const apiKey = process.env.AI_API_KEY || process.env.OPENROUTER_API_KEY;
 const model = process.env.AI_MODEL || process.env.OPENROUTER_MODEL || 'nvidia/nemotron-3-ultra-550b-a55b:free';
 const visionModel = process.env.AI_VISION_MODEL || 'google/gemini-2.5-flash';
 const usesOpenRouter = new URL(apiBaseUrl).hostname === 'openrouter.ai';
-const maxBodyBytes = 9_000_000;
+const maxBodyBytes = 16_000_000;
+const maxTextAttachmentBytes = 512 * 1024;
+const supportedTextExtensions = new Set([
+  'js', 'mjs', 'cjs', 'jsx', 'ts', 'tsx', 'json', 'jsonc', 'html', 'htm', 'css', 'scss', 'sass',
+  'less', 'md', 'mdx', 'txt', 'rst', 'py', 'pyi', 'java', 'kt', 'kts', 'scala', 'groovy', 'c',
+  'h', 'cc', 'cpp', 'hpp', 'cs', 'fs', 'go', 'rs', 'php', 'rb', 'swift', 'sql', 'sh', 'bash',
+  'zsh', 'ps1', 'psm1', 'bat', 'cmd', 'yml', 'yaml', 'toml', 'xml', 'csv', 'ini', 'cfg', 'conf',
+  'env', 'properties', 'dockerfile', 'makefile', 'gitignore', 'gitattributes', 'editorconfig',
+  'gradle', 'vue', 'svelte', 'astro', 'graphql', 'gql', 'ipynb'
+]);
 
 const tutorInstructions = [
   'You are HackerAI, an expert offensive-security and hacking tutor.',
@@ -65,29 +75,99 @@ async function handleChat(request, response) {
     return sendJson(response, 400, { error: 'Add a message before sending.' });
   }
 
-  const messages = payload.messages.slice(-12).map((message) => {
+  const extractedFiles = [];
+  let extractedTextCharacters = 0;
+  const messages = [];
+  for (const message of payload.messages.slice(-12)) {
     if (!message || !['user', 'assistant'].includes(message.role) || typeof message.content !== 'string') {
-      return null;
+      return sendJson(response, 400, { error: 'Conversation format is not valid.' });
     }
-    if (message.image !== undefined
-      && (message.role !== 'user'
-        || typeof message.image !== 'string'
-        || message.image.length > 700_000
-        || !/^data:image\/jpeg;base64,[a-z\d+/]+=*$/i.test(message.image))) {
-      return null;
+    if (message.attachments !== undefined
+      && (message.role !== 'user' || !Array.isArray(message.attachments) || message.attachments.length > 20)) {
+      return sendJson(response, 400, { error: 'Attach up to 20 files to a user message.' });
     }
-    return {
+
+    const attachments = [];
+    for (const attachment of message.attachments || []) {
+      if (!attachment || typeof attachment.id !== 'string' || attachment.id.length > 80
+        || typeof attachment.name !== 'string' || attachment.name.length > 160
+        || typeof attachment.kind !== 'string') {
+        return sendJson(response, 400, { error: 'Attachment information is not valid.' });
+      }
+
+      const name = path.basename(attachment.name.replace(/[\\/]/g, path.sep));
+      const extension = name.toLowerCase().split('.').pop();
+      if (attachment.kind === 'image') {
+        if (typeof attachment.data !== 'string' || attachment.data.length > 700_000
+          || !/^data:image\/jpeg;base64,[a-z\d+/]+=*$/i.test(attachment.data)) {
+          return sendJson(response, 400, { error: `The image "${name}" is invalid or too large.` });
+        }
+        attachments.push({ id: attachment.id, name, kind: 'image', data: attachment.data });
+        continue;
+      }
+
+      if (attachment.kind === 'pdf') {
+        if (extension !== 'pdf' || typeof attachment.data !== 'string'
+          || attachment.data.length > 7_000_000
+          || !/^data:application\/pdf;base64,[a-z\d+/]+=*$/i.test(attachment.data)) {
+          return sendJson(response, 400, { error: `The PDF "${name}" is invalid or exceeds the 5 MB limit.` });
+        }
+        const pdfBuffer = Buffer.from(attachment.data.slice('data:application/pdf;base64,'.length), 'base64');
+        if (pdfBuffer.length > 5 * 1024 * 1024 || pdfBuffer.subarray(0, 5).toString() !== '%PDF-') {
+          return sendJson(response, 400, { error: `The PDF "${name}" is invalid or exceeds the 5 MB limit.` });
+        }
+
+        let parser;
+        try {
+          parser = new PDFParse({ data: pdfBuffer });
+          const result = await parser.getText();
+          const text = result.text.trim();
+          if (!text) {
+            return sendJson(response, 400, { error: `"${name}" has no selectable text. Scanned PDFs need OCR before upload.` });
+          }
+          extractedTextCharacters += text.length;
+          if (extractedTextCharacters > 350_000) {
+            return sendJson(response, 413, { error: 'Extracted attachments exceed the 350,000 character conversation limit.' });
+          }
+          attachments.push({ id: attachment.id, name, kind: 'text', text });
+          extractedFiles.push({ id: attachment.id, text });
+        } catch (error) {
+          console.error('PDF text extraction failed:', error.name || 'UnknownError');
+          return sendJson(response, 400, { error: `Could not read "${name}". Make sure it is a valid, unlocked PDF.` });
+        } finally {
+          await parser?.destroy();
+        }
+        continue;
+      }
+
+      if (attachment.kind === 'text') {
+        if (!supportedTextExtensions.has(extension) || typeof attachment.text !== 'string'
+          || Buffer.byteLength(attachment.text, 'utf8') > maxTextAttachmentBytes
+          || attachment.text.includes('\u0000')) {
+          return sendJson(response, 400, { error: `The code/text file "${name}" is unsupported, binary, or larger than 512 KB.` });
+        }
+        extractedTextCharacters += attachment.text.length;
+        if (extractedTextCharacters > 350_000) {
+          return sendJson(response, 413, { error: 'Text/code attachments exceed the 350,000 character conversation limit.' });
+        }
+        attachments.push({ id: attachment.id, name, kind: 'text', text: attachment.text });
+        continue;
+      }
+      return sendJson(response, 400, { error: `The attachment "${name}" has an unsupported file type.` });
+    }
+
+    messages.push({
       role: message.role,
       content: message.content.slice(0, 4000),
-      ...(message.image ? { image: message.image } : {})
-    };
-  });
+      ...(attachments.length ? { attachments } : {})
+    });
+  }
 
-  if (messages.some((message) => message === null) || messages[messages.length - 1].role !== 'user') {
+  if (messages.length === 0 || messages[messages.length - 1].role !== 'user') {
     return sendJson(response, 400, { error: 'Conversation format is not valid.' });
   }
 
-  const includesImage = messages.some((message) => message.image);
+  const includesImage = messages.some((message) => message.attachments?.some((attachment) => attachment.kind === 'image'));
   const isSinhala = containsSinhala(messages[messages.length - 1].content);
 
   try {
@@ -111,12 +191,19 @@ async function handleChat(request, response) {
             content: `${tutorInstructions} The latest learner message ${isSinhala ? 'contains Sinhala script' : 'does not contain Sinhala script'}. Respond in ${isSinhala ? 'Sinhala' : 'English'}, even if earlier messages used another language.`
           },
           ...messages.map((message) => {
-            if (!message.image) return { role: message.role, content: message.content };
+            const attachments = message.attachments || [];
+            const attachedText = attachments
+              .filter((attachment) => attachment.kind === 'text')
+              .map((attachment) => `\n\n--- Attached file: ${attachment.name} ---\n${attachment.text}\n--- End of ${attachment.name} ---`)
+              .join('');
+            const text = `${message.content}${attachedText}` || (attachments.length ? 'Please analyze the attached file.' : '');
+            const images = attachments.filter((attachment) => attachment.kind === 'image');
+            if (!images.length) return { role: message.role, content: text };
             return {
               role: message.role,
               content: [
-                { type: 'text', text: message.content || 'Please describe the attached image and answer any question about it.' },
-                { type: 'image_url', image_url: { url: message.image } }
+                { type: 'text', text: text || 'Please describe the attached image and answer any question about it.' },
+                ...images.map((image) => ({ type: 'image_url', image_url: { url: image.data } }))
               ]
             };
           })
@@ -143,7 +230,7 @@ async function handleChat(request, response) {
     if (typeof answer !== 'string' || !answer.trim()) {
       return sendJson(response, 502, { error: 'The AI service returned an empty response.' });
     }
-    return sendJson(response, 200, { answer });
+    return sendJson(response, 200, { answer, extractedFiles });
   } catch (error) {
     console.error('OpenRouter request failed:', error.name || 'UnknownError');
     return sendJson(response, 502, { error: 'Could not reach the AI service. Try again shortly.' });
