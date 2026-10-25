@@ -11,9 +11,12 @@ const historyList = document.querySelector('#history-list');
 const newChatButton = document.querySelector('#new-chat-button');
 const connection = document.querySelector('#connection-status');
 const connectionLabel = document.querySelector('#connection-label');
+const modelSelect = document.querySelector('#model-select');
 const toast = document.querySelector('#toast');
 const storageKey = 'hackerai-chat-history';
+const modelStorageKey = 'hackerai-model';
 let toastTimer;
+let availableModels = [];
 
 function loadConversations() {
   try {
@@ -426,6 +429,15 @@ async function prepareFile(file) {
 async function sendMessage(value) {
   const content = value.trim();
   if ((!content && !selectedAttachments.length) || isSending) return;
+  if (!modelSelect.value) {
+    showToast('Wait for the free model list to load before sending a message.');
+    return;
+  }
+  if (selectedAttachments.some((attachment) => attachment.kind === 'image')
+    && !availableModels.find((model) => model.id === modelSelect.value)?.supportsImages) {
+    showToast('Choose a model that supports images before sending this attachment.');
+    return;
+  }
 
   let conversation = activeConversation();
   const isNewConversation = !conversation;
@@ -469,7 +481,7 @@ async function sendMessage(value) {
     const response = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ messages: conversation.messages })
+      body: JSON.stringify({ messages: conversation.messages, modelId: modelSelect.value })
     });
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || 'Could not connect to the AI service.');
@@ -575,11 +587,55 @@ newChatButton.addEventListener('click', () => {
 
 renderConversation();
 
+fetch('/api/models')
+  .then(async (response) => {
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || 'Could not load the model list.');
+    if (!Array.isArray(result.models) || result.models.length === 0) throw new Error('No free models are currently available.');
+    availableModels = result.models;
+    modelSelect.replaceChildren();
+    availableModels.forEach((model) => {
+      const option = document.createElement('option');
+      option.value = model.id;
+      option.textContent = `${model.name.replace(/\s*\(free\)\s*$/i, '')}${model.supportsImages ? ' · vision' : ''}`;
+      option.title = `${model.useCase} · ${Math.round(model.contextLength / 1000)}K context · Free`;
+      modelSelect.append(option);
+    });
+    const preferredModel = localStorage.getItem(modelStorageKey);
+    modelSelect.value = availableModels.some((model) => model.id === preferredModel)
+      ? preferredModel
+      : availableModels.some((model) => model.id === 'nvidia/nemotron-3-ultra-550b-a55b:free')
+        ? 'nvidia/nemotron-3-ultra-550b-a55b:free'
+        : availableModels[0].id;
+    modelSelect.disabled = false;
+    if (connection.classList.contains('ready')) {
+      connectionLabel.textContent = `AI ready · ${modelSelect.selectedOptions[0].textContent}`;
+    }
+  })
+  .catch((error) => {
+    modelSelect.replaceChildren(new Option('Models unavailable', ''));
+    modelSelect.disabled = true;
+    showToast(error.message);
+  });
+
+modelSelect.addEventListener('change', () => {
+  if (connection.classList.contains('ready')) {
+    connectionLabel.textContent = `AI ready · ${modelSelect.selectedOptions[0].textContent}`;
+  }
+  try {
+    localStorage.setItem(modelStorageKey, modelSelect.value);
+  } catch (error) {
+    showToast(`Could not save model preference: ${error.message}`);
+  }
+});
+
 fetch('/api/status')
   .then((response) => response.json())
   .then((status) => {
     connection.classList.add(status.configured ? 'ready' : 'error');
-    connectionLabel.textContent = status.configured ? `AI ready · ${status.model}` : 'Configure the API key';
+    connectionLabel.textContent = status.configured
+      ? `AI ready · ${modelSelect.selectedOptions[0]?.textContent || status.model}`
+      : 'Configure the API key';
   })
   .catch(() => {
     connection.classList.add('error');

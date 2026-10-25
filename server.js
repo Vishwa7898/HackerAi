@@ -10,6 +10,21 @@ const apiKey = process.env.AI_API_KEY || process.env.OPENROUTER_API_KEY;
 const model = process.env.AI_MODEL || process.env.OPENROUTER_MODEL || 'nvidia/nemotron-3-ultra-550b-a55b:free';
 const visionModel = process.env.AI_VISION_MODEL || 'google/gemini-2.5-flash';
 const usesOpenRouter = new URL(apiBaseUrl).hostname === 'openrouter.ai';
+const featuredFreeModelIds = [
+  'cohere/north-mini-code:free',
+  'poolside/laguna-s-2.1:free',
+  'nvidia/nemotron-3-ultra-550b-a55b:free',
+  'google/gemma-4-31b-it:free',
+  'nvidia/nemotron-3.5-super-vl:free'
+];
+const modelUseCases = {
+  'cohere/north-mini-code:free': 'Code review and programming',
+  'poolside/laguna-s-2.1:free': 'Large code projects',
+  'nvidia/nemotron-3-ultra-550b-a55b:free': 'Detailed reasoning',
+  'google/gemma-4-31b-it:free': 'Code and image understanding',
+  'nvidia/nemotron-3.5-super-vl:free': 'Long code and image analysis'
+};
+let modelCatalogCache = { expiresAt: 0, models: null };
 const maxBodyBytes = 16_000_000;
 const maxTextAttachmentBytes = 512 * 1024;
 const supportedTextExtensions = new Set([
@@ -59,6 +74,35 @@ async function readJson(request) {
   }
 }
 
+async function getFeaturedFreeModels() {
+  if (modelCatalogCache.models && modelCatalogCache.expiresAt > Date.now()) return modelCatalogCache.models;
+  const response = await fetch(`${apiBaseUrl}/models`, {
+    headers: apiKey ? { authorization: `Bearer ${apiKey}` } : {},
+    signal: AbortSignal.timeout(12_000)
+  });
+  if (!response.ok) throw new Error(`OpenRouter model catalog returned status ${response.status}.`);
+  const catalog = await response.json();
+  if (!Array.isArray(catalog.data)) throw new Error('OpenRouter returned an invalid model catalog.');
+
+  const byId = new Map(catalog.data.map((entry) => [entry.id, entry]));
+  const models = featuredFreeModelIds.flatMap((id) => {
+    const entry = byId.get(id);
+    if (!entry || !id.endsWith(':free')
+      || Number(entry.pricing?.prompt) !== 0
+      || Number(entry.pricing?.completion) !== 0) return [];
+    return [{
+      id,
+      name: entry.name,
+      useCase: modelUseCases[id],
+      contextLength: entry.context_length,
+      supportsImages: entry.architecture?.input_modalities?.includes('image') || false
+    }];
+  });
+  if (!models.length) throw new Error('None of the featured free models are currently available.');
+  modelCatalogCache = { expiresAt: Date.now() + 5 * 60_000, models };
+  return models;
+}
+
 async function handleChat(request, response) {
   if (usesOpenRouter && !apiKey) {
     return sendJson(response, 503, { error: 'Set AI_API_KEY in .env or .env.local, then restart the server.' });
@@ -73,6 +117,14 @@ async function handleChat(request, response) {
 
   if (!Array.isArray(payload.messages) || payload.messages.length === 0) {
     return sendJson(response, 400, { error: 'Add a message before sending.' });
+  }
+
+  let selectedModel = model;
+  if (payload.modelId !== undefined) {
+    if (typeof payload.modelId !== 'string' || !featuredFreeModelIds.includes(payload.modelId)) {
+      return sendJson(response, 400, { error: 'Choose one of the available featured free models.' });
+    }
+    selectedModel = payload.modelId;
   }
 
   const extractedFiles = [];
@@ -171,6 +223,12 @@ async function handleChat(request, response) {
   const isSinhala = containsSinhala(messages[messages.length - 1].content);
 
   try {
+    if (includesImage && payload.modelId) {
+      const models = await getFeaturedFreeModels();
+      if (!models.some((entry) => entry.id === selectedModel && entry.supportsImages)) {
+        return sendJson(response, 400, { error: 'The selected model cannot analyze images. Choose Gemma 4 31B or Nemotron 3.5 Super VL.' });
+      }
+    }
     const headers = { 'content-type': 'application/json' };
     if (apiKey) headers.authorization = `Bearer ${apiKey}`;
     if (usesOpenRouter) {
@@ -182,7 +240,9 @@ async function handleChat(request, response) {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        model: includesImage ? visionModel : model,
+        model: includesImage
+          ? (payload.modelId ? selectedModel : visionModel)
+          : (payload.modelId ? selectedModel : model),
         temperature: 0.4,
         max_tokens: 900,
         messages: [
@@ -267,6 +327,17 @@ async function handleStatic(pathname, response) {
 
 const server = createServer(async (request, response) => {
   const url = new URL(request.url, `http://${request.headers.host || 'localhost'}`);
+  if (request.method === 'GET' && url.pathname === '/api/models') {
+    if (!usesOpenRouter) {
+      return sendJson(response, 400, { error: 'Free OpenRouter model selection is only available with the OpenRouter API.' });
+    }
+    try {
+      return sendJson(response, 200, { models: await getFeaturedFreeModels() });
+    } catch (error) {
+      console.error('OpenRouter model catalog request failed:', error.name || 'UnknownError');
+      return sendJson(response, 502, { error: 'Could not load free models from OpenRouter. Try again shortly.' });
+    }
+  }
   if (request.method === 'GET' && url.pathname === '/api/status') {
     return sendJson(response, 200, { configured: !usesOpenRouter || Boolean(apiKey), model });
   }

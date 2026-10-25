@@ -46,6 +46,10 @@
         <header class="topbar">
           <div class="breadcrumb"><span>Cybersecurity</span><span class="crumb-slash">/</span><strong>AI Tutor</strong></div>
           <div class="topbar-right">
+            <label class="model-picker-label" for="model-select">Model</label>
+            <select class="model-select" id="model-select" aria-label="Choose an AI model" disabled>
+              <option value="">Loading free models...</option>
+            </select>
             <span class="connection" id="connection-status"><span class="connection-dot"></span><span id="connection-label">Checking connection</span></span>
             <span class="avatar" aria-label="Learner">L</span>
           </div>
