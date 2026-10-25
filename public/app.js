@@ -1,5 +1,11 @@
 const form = document.querySelector('#chat-form');
 const input = document.querySelector('#message-input');
+const imageInput = document.querySelector('#image-input');
+const imagePreview = document.querySelector('#image-preview');
+const imagePreviewImage = document.querySelector('#image-preview-img');
+const imagePreviewName = document.querySelector('#image-preview-name');
+const attachImageButton = document.querySelector('#attach-image-button');
+const removeImageButton = document.querySelector('#remove-image-button');
 const sendButton = document.querySelector('#send-button');
 const charCount = document.querySelector('#char-count');
 const welcome = document.querySelector('#welcome');
@@ -36,6 +42,7 @@ function loadConversations() {
 let conversations = loadConversations();
 let activeConversationId = conversations[0]?.id || null;
 let isSending = false;
+let selectedImage = null;
 
 function saveConversations() {
   try {
@@ -79,7 +86,7 @@ function renderConversation() {
   const conversation = activeConversation();
   messageList.replaceChildren();
   welcome.hidden = Boolean(conversation?.messages.length);
-  conversation?.messages.forEach(({ role, content }) => addMessage(role, content));
+  conversation?.messages.forEach(({ role, content, image, imageName }) => addMessage(role, content, false, image, imageName));
   renderHistory();
 }
 
@@ -232,7 +239,7 @@ function showToast(message) {
   toastTimer = setTimeout(() => toast.classList.remove('visible'), 4500);
 }
 
-function addMessage(role, content, pending = false) {
+function addMessage(role, content, pending = false, image = null, imageName = '') {
   const row = document.createElement('div');
   row.className = `message ${role}${pending ? ' pending' : ''}`;
 
@@ -242,10 +249,23 @@ function addMessage(role, content, pending = false) {
 
   const text = document.createElement('div');
   text.className = 'message-content';
+  if (image && /^data:image\/(?:jpeg|png|webp);base64,[a-z\d+/]+=*$/i.test(image)) {
+    const preview = document.createElement('img');
+    preview.className = 'message-image';
+    preview.src = image;
+    preview.alt = imageName ? `Attached image: ${imageName}` : 'Attached image';
+    text.append(preview);
+  }
   if (role === 'assistant' && !pending) {
     text.classList.add('markdown-body');
     text.innerHTML = renderMarkdown(content);
-  } else {
+  } else if (content) {
+    const messageText = document.createElement('div');
+    messageText.className = 'message-text';
+    messageText.textContent = content;
+    text.append(messageText);
+  }
+  if (role === 'assistant' && pending) {
     text.textContent = content;
   }
   row.append(avatar, text);
@@ -260,16 +280,78 @@ function resizeInput() {
   charCount.textContent = `${input.value.length} / 4000`;
 }
 
+function clearSelectedImage() {
+  selectedImage = null;
+  imageInput.value = '';
+  imagePreview.hidden = true;
+  imagePreviewImage.removeAttribute('src');
+  imagePreviewName.textContent = '';
+}
+
+function showSelectedImage(image) {
+  selectedImage = image;
+  imagePreviewImage.src = image.data;
+  imagePreviewName.textContent = image.name;
+  imagePreview.hidden = false;
+}
+
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener('load', () => {
+      if (typeof reader.result !== 'string') {
+        reject(new Error('The selected image could not be read.'));
+        return;
+      }
+      resolve(reader.result);
+    });
+    reader.addEventListener('error', () => reject(new Error('The selected image could not be read.')));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function prepareImage(file) {
+  if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+    throw new Error('Choose a JPG, PNG, or WebP image.');
+  }
+  if (file.size > 10 * 1024 * 1024) {
+    throw new Error('Choose an image smaller than 10 MB.');
+  }
+
+  const source = await readFileAsDataUrl(file);
+  const image = new Image();
+  image.src = source;
+  await image.decode();
+  const scale = Math.min(1, 1600 / Math.max(image.naturalWidth, image.naturalHeight));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+  canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+  const context = canvas.getContext('2d');
+  if (!context) throw new Error('Image processing is not available in this browser.');
+  context.fillStyle = '#fff';
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.drawImage(image, 0, 0, canvas.width, canvas.height);
+
+  let data = canvas.toDataURL('image/jpeg', 0.78);
+  let quality = 0.68;
+  while (data.length > 700_000 && quality >= 0.4) {
+    data = canvas.toDataURL('image/jpeg', quality);
+    quality -= 0.1;
+  }
+  if (data.length > 700_000) throw new Error('This image is too large to attach. Choose a smaller image.');
+  return { data, name: file.name.slice(0, 160) || 'image.jpg' };
+}
+
 async function sendMessage(value) {
   const content = value.trim();
-  if (!content || isSending) return;
+  if ((!content && !selectedImage) || isSending) return;
 
   let conversation = activeConversation();
   const isNewConversation = !conversation;
   if (!conversation) {
     conversation = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
-      title: content.length > 42 ? `${content.slice(0, 39)}...` : content,
+      title: (content || 'Image question').length > 42 ? `${(content || 'Image question').slice(0, 39)}...` : (content || 'Image question'),
       messages: [],
       updatedAt: Date.now()
     };
@@ -277,16 +359,23 @@ async function sendMessage(value) {
     activeConversationId = conversation.id;
   }
 
+  const attachedImage = selectedImage;
   isSending = true;
-  conversation.messages.push({ role: 'user', content });
+  conversation.messages.push({
+    role: 'user',
+    content,
+    ...(attachedImage ? { image: attachedImage.data, imageName: attachedImage.name } : {})
+  });
   conversation.updatedAt = Date.now();
   saveConversations();
   renderHistory();
   welcome.hidden = true;
-  addMessage('user', content);
+  addMessage('user', content, false, attachedImage?.data, attachedImage?.name);
   input.value = '';
   resizeInput();
+  clearSelectedImage();
   sendButton.disabled = true;
+  attachImageButton.disabled = true;
   newChatButton.disabled = true;
   sendButton.querySelector('span:first-child').textContent = 'Sending';
   const pending = addMessage('assistant', 'Preparing your answer...', true);
@@ -308,6 +397,11 @@ async function sendMessage(value) {
     pending.row.classList.remove('pending');
   } catch (error) {
     conversation.messages.pop();
+    if (attachedImage) {
+      showSelectedImage(attachedImage);
+      input.value = content;
+      resizeInput();
+    }
     if (isNewConversation) {
       conversations = conversations.filter((item) => item.id !== conversation.id);
       activeConversationId = null;
@@ -318,6 +412,7 @@ async function sendMessage(value) {
   } finally {
     isSending = false;
     sendButton.disabled = false;
+    attachImageButton.disabled = false;
     newChatButton.disabled = false;
     renderHistory();
     sendButton.querySelector('span:first-child').textContent = 'Send';
@@ -337,6 +432,19 @@ input.addEventListener('keydown', (event) => {
     form.requestSubmit();
   }
 });
+
+attachImageButton.addEventListener('click', () => imageInput.click());
+imageInput.addEventListener('change', async () => {
+  const [file] = imageInput.files || [];
+  if (!file) return;
+  try {
+    showSelectedImage(await prepareImage(file));
+  } catch (error) {
+    imageInput.value = '';
+    showToast(error.message);
+  }
+});
+removeImageButton.addEventListener('click', clearSelectedImage);
 
 document.querySelectorAll('[data-prompt]').forEach((button) => {
   button.addEventListener('click', () => sendMessage(button.dataset.prompt));

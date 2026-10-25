@@ -87,12 +87,19 @@
 
           <div class="composer-wrap">
             <form class="composer" id="chat-form">
+              <div class="image-preview" id="image-preview" hidden>
+                <img id="image-preview-img" alt="Image ready to send">
+                <span class="image-preview-name" id="image-preview-name"></span>
+                <button class="remove-image-button" id="remove-image-button" type="button" aria-label="Remove attached image" title="Remove image">×</button>
+              </div>
               <label class="visually-hidden" for="message-input">Your question</label>
-              <textarea id="message-input" rows="1" maxlength="4000" placeholder="Ask about cybersecurity..." required></textarea>
+              <textarea id="message-input" rows="1" maxlength="4000" placeholder="Ask about cybersecurity..."></textarea>
+              <input class="visually-hidden" id="image-input" type="file" accept="image/jpeg,image/png,image/webp">
               <div class="composer-bottom">
                 <span class="composer-hint"><span class="hint-dot"></span> Educational use in labs / CTFs</span>
                 <div class="composer-actions">
                   <span class="char-count" id="char-count">0 / 4000</span>
+                  <button class="attach-button" id="attach-image-button" type="button" aria-label="Attach an image" title="Attach an image">＋ Image</button>
                   <button class="send-button" id="send-button" type="submit" aria-label="Send question" title="Send">
                     <span>Send</span><span class="send-arrow" aria-hidden="true">↑</span>
                   </button>

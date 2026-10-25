@@ -7,8 +7,9 @@ const port = Number(process.env.PORT || 3000);
 const apiBaseUrl = (process.env.AI_BASE_URL || 'https://openrouter.ai/api/v1').replace(/\/+$/, '');
 const apiKey = process.env.AI_API_KEY || process.env.OPENROUTER_API_KEY;
 const model = process.env.AI_MODEL || process.env.OPENROUTER_MODEL || 'nvidia/nemotron-3-ultra-550b-a55b:free';
+const visionModel = process.env.AI_VISION_MODEL || 'google/gemini-2.5-flash';
 const usesOpenRouter = new URL(apiBaseUrl).hostname === 'openrouter.ai';
-const maxBodyBytes = 24_000;
+const maxBodyBytes = 9_000_000;
 
 const tutorInstructions = [
   'You are HackerAI, an expert offensive-security and hacking tutor.',
@@ -68,13 +69,25 @@ async function handleChat(request, response) {
     if (!message || !['user', 'assistant'].includes(message.role) || typeof message.content !== 'string') {
       return null;
     }
-    return { role: message.role, content: message.content.slice(0, 4000) };
+    if (message.image !== undefined
+      && (message.role !== 'user'
+        || typeof message.image !== 'string'
+        || message.image.length > 700_000
+        || !/^data:image\/jpeg;base64,[a-z\d+/]+=*$/i.test(message.image))) {
+      return null;
+    }
+    return {
+      role: message.role,
+      content: message.content.slice(0, 4000),
+      ...(message.image ? { image: message.image } : {})
+    };
   });
 
   if (messages.some((message) => message === null) || messages[messages.length - 1].role !== 'user') {
     return sendJson(response, 400, { error: 'Conversation format is not valid.' });
   }
 
+  const includesImage = messages.some((message) => message.image);
   const isSinhala = containsSinhala(messages[messages.length - 1].content);
 
   try {
@@ -89,7 +102,7 @@ async function handleChat(request, response) {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        model,
+        model: includesImage ? visionModel : model,
         temperature: 0.4,
         max_tokens: 900,
         messages: [
@@ -97,7 +110,16 @@ async function handleChat(request, response) {
             role: 'system',
             content: `${tutorInstructions} The latest learner message ${isSinhala ? 'contains Sinhala script' : 'does not contain Sinhala script'}. Respond in ${isSinhala ? 'Sinhala' : 'English'}, even if earlier messages used another language.`
           },
-          ...messages
+          ...messages.map((message) => {
+            if (!message.image) return { role: message.role, content: message.content };
+            return {
+              role: message.role,
+              content: [
+                { type: 'text', text: message.content || 'Please describe the attached image and answer any question about it.' },
+                { type: 'image_url', image_url: { url: message.image } }
+              ]
+            };
+          })
         ]
       }),
       signal: AbortSignal.timeout(45_000)
@@ -106,10 +128,18 @@ async function handleChat(request, response) {
     const result = await upstream.json();
     if (!upstream.ok) {
       console.error('OpenRouter returned status', upstream.status);
+      if (includesImage) {
+        return sendJson(response, 502, { error: 'Image analysis failed. Check that AI_VISION_MODEL is available to your API account and supports image input.' });
+      }
       return sendJson(response, 502, { error: 'AI service request failed. Check the selected model and API account.' });
     }
 
-    const answer = result.choices?.[0]?.message?.content;
+    const responseContent = result.choices?.[0]?.message?.content;
+    const answer = typeof responseContent === 'string'
+      ? responseContent
+      : Array.isArray(responseContent)
+        ? responseContent.filter((part) => part.type === 'text' && typeof part.text === 'string').map((part) => part.text).join('\n')
+        : null;
     if (typeof answer !== 'string' || !answer.trim()) {
       return sendJson(response, 502, { error: 'The AI service returned an empty response.' });
     }
