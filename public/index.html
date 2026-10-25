@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="si">
+<html lang="en">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -14,25 +14,25 @@
   <body>
     <div class="app-shell">
       <aside class="sidebar">
-        <a class="brand" href="/" aria-label="HackerAI මුල් පිටුව">
+        <a class="brand" href="/" aria-label="HackerAI home">
           <span class="brand-mark" aria-hidden="true">h<span>.</span></span>
           <span>Hacker<span class="brand-light">AI</span></span>
         </a>
 
         <div class="sidebar-section">
-          <p class="eyebrow">ඉගෙනුම් මාර්ගය</p>
-          <nav class="topic-nav" aria-label="ඉගෙනුම් මාතෘකා">
-            <button class="topic active" data-prompt="මට cybersecurity මූලික කරුණු සහ ඉගෙනුම් මාර්ගයක් සිංහලෙන් දෙන්න." type="button">
-              <span class="topic-index">01</span><span>මූලික කරුණු</span>
+          <p class="eyebrow">Learning path</p>
+          <nav class="topic-nav" aria-label="Learning topics">
+            <button class="topic active" data-prompt="Explain cybersecurity fundamentals and give me a learning roadmap." type="button">
+              <span class="topic-index">01</span><span>Fundamentals</span>
             </button>
-            <button class="topic" data-prompt="Web security මූලික කරුණු පැහැදිලි කරලා, ආරක්ෂකයාගේ දෘෂ්ටිකෝණයෙන් ඉගෙනුම් මාර්ගයක් දෙන්න." type="button">
-              <span class="topic-index">02</span><span>Web ආරක්ෂාව</span>
+            <button class="topic" data-prompt="Explain web security fundamentals and give me a learning roadmap from a defender's perspective." type="button">
+              <span class="topic-index">02</span><span>Web security</span>
             </button>
-            <button class="topic" data-prompt="Linux security ඉගෙනීමට ආරක්ෂිත, ආරම්භක මට්ටමේ මාර්ගයක් දෙන්න." type="button">
-              <span class="topic-index">03</span><span>Linux ආරක්ෂාව</span>
+            <button class="topic" data-prompt="Give me a safe, beginner-friendly roadmap for learning Linux security." type="button">
+              <span class="topic-index">03</span><span>Linux security</span>
             </button>
-            <button class="topic" data-prompt="CTF පුහුණුව පටන්ගන්න beginner-friendly roadmap එකක් සහ safe practice උපදෙස් දෙන්න." type="button">
-              <span class="topic-index">04</span><span>CTF පුහුණුව</span>
+            <button class="topic" data-prompt="Give me a beginner-friendly roadmap and safe practice tips for getting started with CTFs." type="button">
+              <span class="topic-index">04</span><span>CTF practice</span>
             </button>
           </nav>
         </div>
@@ -40,8 +40,8 @@
         <div class="sidebar-note">
           <span class="note-dot"></span>
           <div>
-            <p class="note-title">පුහුණු පරිසරය</p>
-            <p class="note-copy">අවසර ඇති lab සහ CTF සඳහා පමණයි</p>
+            <p class="note-title">Practice environment</p>
+            <p class="note-copy">For authorized labs and CTFs only</p>
           </div>
         </div>
 
@@ -55,38 +55,38 @@
         <header class="topbar">
           <div class="breadcrumb"><span>Cybersecurity</span><span class="crumb-slash">/</span><strong>AI Tutor</strong></div>
           <div class="topbar-right">
-            <span class="connection" id="connection-status"><span class="connection-dot"></span><span id="connection-label">සම්බන්ධතාව පරීක්ෂා කරයි</span></span>
+            <span class="connection" id="connection-status"><span class="connection-dot"></span><span id="connection-label">Checking connection</span></span>
             <span class="avatar" aria-label="Learner">L</span>
           </div>
         </header>
 
-        <section class="workspace" aria-label="AI ඉගෙනුම් සංවාදය">
+        <section class="workspace" aria-label="AI learning conversation">
           <div class="conversation" id="conversation" aria-live="polite">
             <div class="welcome" id="welcome">
               <div class="welcome-kicker"><span class="kicker-line"></span> CYBERSECURITY LEARNING SPACE</div>
-              <h1>ආරක්ෂාව<br><span>තේරුම් ගන්න.</span></h1>
-              <p class="welcome-copy">මූලික සංකල්පවලින් පටන්ගෙන, අවසර ඇති lab සහ CTF අභ්‍යාස හරහා ඉගෙන ගන්න.</p>
+              <h1>Understand<br><span>cybersecurity.</span></h1>
+              <p class="welcome-copy">Start with the fundamentals and learn through authorized labs and CTF exercises.</p>
 
-              <div class="starter-heading"><span>ආරම්භ කිරීමට මාතෘකාවක් තෝරන්න</span><span class="starter-rule"></span></div>
+              <div class="starter-heading"><span>Choose a topic to get started</span><span class="starter-rule"></span></div>
               <div class="starter-grid">
-                <button class="starter-card" data-prompt="OWASP Top 10 කියන්නේ මොකක්ද? beginner කෙනෙකුට ආරක්ෂක දෘෂ්ටිකෝණයෙන් පැහැදිලි කරන්න." type="button">
+                <button class="starter-card" data-prompt="What is the OWASP Top 10? Explain it to a beginner from a defensive perspective." type="button">
                   <span class="card-number">01 / WEB</span>
                   <span class="card-title">OWASP Top 10</span>
                   <span class="card-arrow" aria-hidden="true">↗</span>
                 </button>
-                <button class="starter-card" data-prompt="CTF එකක් කියන්නේ මොකක්ද, නීත්‍යානුකූල beginner practice එකක් පටන්ගන්නේ කොහොමද?" type="button">
+                <button class="starter-card" data-prompt="What is a CTF, and how can I start practicing legally as a beginner?" type="button">
                   <span class="card-number">02 / PRACTICE</span>
-                  <span class="card-title">CTF පටන්ගමු</span>
+                  <span class="card-title">Getting started with CTFs</span>
                   <span class="card-arrow" aria-hidden="true">↗</span>
                 </button>
-                <button class="starter-card" data-prompt="Phishing වල පොදු ලක්ෂණ සහ තමන්ගේ ආයතනය ආරක්ෂා කරගැනීමේ ක්‍රම කියන්න." type="button">
+                <button class="starter-card" data-prompt="What are common signs of phishing, and how can I protect my organization?" type="button">
                   <span class="card-number">03 / DEFENSE</span>
-                  <span class="card-title">Phishing හඳුනාගැනීම</span>
+                  <span class="card-title">Recognizing phishing</span>
                   <span class="card-arrow" aria-hidden="true">↗</span>
                 </button>
-                <button class="starter-card" data-prompt="HTTP request සහ response කියවන්නේ කොහොමද? ආරක්ෂිත, toy example එකකින් පැහැදිලි කරන්න." type="button">
+                <button class="starter-card" data-prompt="How do I read an HTTP request and response? Explain using a safe, toy example." type="button">
                   <span class="card-number">04 / FUNDAMENTALS</span>
-                  <span class="card-title">HTTP මූලික කරුණු</span>
+                  <span class="card-title">HTTP fundamentals</span>
                   <span class="card-arrow" aria-hidden="true">↗</span>
                 </button>
               </div>
@@ -96,19 +96,19 @@
 
           <div class="composer-wrap">
             <form class="composer" id="chat-form">
-              <label class="visually-hidden" for="message-input">ඔබේ ප්‍රශ්නය</label>
-              <textarea id="message-input" rows="1" maxlength="4000" placeholder="Cybersecurity ගැන අහන්න..." required></textarea>
+              <label class="visually-hidden" for="message-input">Your question</label>
+              <textarea id="message-input" rows="1" maxlength="4000" placeholder="Ask about cybersecurity..." required></textarea>
               <div class="composer-bottom">
-                <span class="composer-hint"><span class="hint-dot"></span> Lab / CTF අධ්‍යාපනික භාවිතය</span>
+                <span class="composer-hint"><span class="hint-dot"></span> Educational use in labs / CTFs</span>
                 <div class="composer-actions">
                   <span class="char-count" id="char-count">0 / 4000</span>
-                  <button class="send-button" id="send-button" type="submit" aria-label="ප්‍රශ්නය යවන්න" title="යවන්න">
-                    <span>යවන්න</span><span class="send-arrow" aria-hidden="true">↑</span>
+                  <button class="send-button" id="send-button" type="submit" aria-label="Send question" title="Send">
+                    <span>Send</span><span class="send-arrow" aria-hidden="true">↑</span>
                   </button>
                 </div>
               </div>
             </form>
-            <p class="disclaimer">AI පිළිතුරු වැරදි විය හැකියි. සැබෑ පද්ධති පරීක්ෂා කරන්න කලින් පැහැදිලි අවසර ලබාගන්න.</p>
+            <p class="disclaimer">AI answers may be inaccurate. Get explicit permission before testing real systems.</p>
           </div>
         </section>
       </main>

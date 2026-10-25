@@ -50,8 +50,8 @@ async function sendMessage(value) {
   input.value = '';
   resizeInput();
   sendButton.disabled = true;
-  sendButton.querySelector('span:first-child').textContent = 'යවමින්';
-  const pending = addMessage('assistant', 'පිළිතුර සකස් කරමින්...', true);
+  sendButton.querySelector('span:first-child').textContent = 'Sending';
+  const pending = addMessage('assistant', 'Preparing your answer...', true);
 
   try {
     const response = await fetch('/api/chat', {
@@ -60,7 +60,7 @@ async function sendMessage(value) {
       body: JSON.stringify({ messages })
     });
     const result = await response.json();
-    if (!response.ok) throw new Error(result.error || 'AI සේවාවට සම්බන්ධ විය නොහැක.');
+    if (!response.ok) throw new Error(result.error || 'Could not connect to the AI service.');
 
     pending.text.textContent = result.answer;
     pending.row.classList.remove('pending');
@@ -71,7 +71,7 @@ async function sendMessage(value) {
     showToast(error.message);
   } finally {
     sendButton.disabled = false;
-    sendButton.querySelector('span:first-child').textContent = 'යවන්න';
+    sendButton.querySelector('span:first-child').textContent = 'Send';
     input.focus();
   }
 }
@@ -107,9 +107,9 @@ fetch('/api/status')
   .then((response) => response.json())
   .then((status) => {
     connection.classList.add(status.configured ? 'ready' : 'error');
-    connectionLabel.textContent = status.configured ? `AI සූදානම් · ${status.model}` : 'API key එක සකස් කරන්න';
+    connectionLabel.textContent = status.configured ? `AI ready · ${status.model}` : 'Configure the API key';
   })
   .catch(() => {
     connection.classList.add('error');
-    connectionLabel.textContent = 'Server සම්බන්ධතාව නැත';
+    connectionLabel.textContent = 'Server connection unavailable';
   });
