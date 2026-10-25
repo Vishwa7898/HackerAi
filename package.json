@@ -1,0 +1,9 @@
+{
+  "name": "hackerai-learning",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "start": "node --env-file-if-exists=.env --env-file-if-exists=.env.local server.js",
+    "dev": "node --watch --env-file-if-exists=.env --env-file-if-exists=.env.local server.js"
+  }
+}
