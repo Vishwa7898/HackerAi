@@ -19,22 +19,13 @@
           <span>Hacker<span class="brand-light">AI</span></span>
         </a>
 
+        <button class="new-chat-button" id="new-chat-button" type="button">
+          <span aria-hidden="true">+</span> New chat
+        </button>
+
         <div class="sidebar-section">
-          <p class="eyebrow">Learning path</p>
-          <nav class="topic-nav" aria-label="Learning topics">
-            <button class="topic active" data-prompt="Explain cybersecurity fundamentals and give me a learning roadmap." type="button">
-              <span class="topic-index">01</span><span>Fundamentals</span>
-            </button>
-            <button class="topic" data-prompt="Explain web security fundamentals and give me a learning roadmap from a defender's perspective." type="button">
-              <span class="topic-index">02</span><span>Web security</span>
-            </button>
-            <button class="topic" data-prompt="Give me a safe, beginner-friendly roadmap for learning Linux security." type="button">
-              <span class="topic-index">03</span><span>Linux security</span>
-            </button>
-            <button class="topic" data-prompt="Give me a beginner-friendly roadmap and safe practice tips for getting started with CTFs." type="button">
-              <span class="topic-index">04</span><span>CTF practice</span>
-            </button>
-          </nav>
+          <p class="eyebrow">Recent chats</p>
+          <nav class="history-list" id="history-list" aria-label="Chat history"></nav>
         </div>
 
         <div class="sidebar-note">
