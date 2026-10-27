@@ -9,6 +9,9 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/styles.css">
+    <script src="https://www.gstatic.com/firebasejs/11.10.0/firebase-app-compat.js" defer></script>
+    <script src="https://www.gstatic.com/firebasejs/11.10.0/firebase-auth-compat.js" defer></script>
+    <script src="https://www.gstatic.com/firebasejs/11.10.0/firebase-analytics-compat.js" defer></script>
     <script src="/app.js" defer></script>
   </head>
   <body>
@@ -51,7 +54,8 @@
               <option value="">Loading free models...</option>
             </select>
             <span class="connection" id="connection-status"><span class="connection-dot"></span><span id="connection-label">Checking connection</span></span>
-            <span class="avatar" aria-label="Learner">L</span>
+            <span class="avatar" id="account-avatar" aria-label="Learner">L</span>
+            <button class="auth-button" id="auth-button" type="button" hidden>Sign in with Google</button>
           </div>
         </header>
 

@@ -2,6 +2,9 @@ const { createServer } = require('node:http');
 const { readFile } = require('node:fs/promises');
 const path = require('node:path');
 const { PDFParse } = require('pdf-parse');
+const { applicationDefault, initializeApp: initializeFirebaseAdmin } = require('firebase-admin/app');
+const { getAuth: getFirebaseAuth } = require('firebase-admin/auth');
+const { getFirestore } = require('firebase-admin/firestore');
 
 const root = path.join(__dirname, 'public');
 const port = Number(process.env.PORT || 3000);
@@ -10,6 +13,33 @@ const apiKey = process.env.AI_API_KEY || process.env.OPENROUTER_API_KEY;
 const model = process.env.AI_MODEL || process.env.OPENROUTER_MODEL || 'nvidia/nemotron-3-ultra-550b-a55b:free';
 const visionModel = process.env.AI_VISION_MODEL || 'google/gemini-2.5-flash';
 const usesOpenRouter = new URL(apiBaseUrl).hostname === 'openrouter.ai';
+const firebaseProjectId = process.env.FIREBASE_PROJECT_ID;
+const firebaseClientConfig = {
+  apiKey: process.env.FIREBASE_API_KEY,
+  authDomain: process.env.FIREBASE_AUTH_DOMAIN,
+  projectId: firebaseProjectId,
+  appId: process.env.FIREBASE_APP_ID,
+  storageBucket: process.env.FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID,
+  measurementId: process.env.FIREBASE_MEASUREMENT_ID
+};
+let firebaseAdminApp = null;
+if (firebaseProjectId) {
+  try {
+    firebaseAdminApp = initializeFirebaseAdmin({
+      credential: applicationDefault(),
+      projectId: firebaseProjectId
+    });
+  } catch (error) {
+    console.error('Firebase Admin initialization failed:', error.name || 'UnknownError');
+  }
+}
+const firebaseEnabled = Boolean(firebaseAdminApp && [
+  firebaseClientConfig.apiKey,
+  firebaseClientConfig.authDomain,
+  firebaseClientConfig.projectId,
+  firebaseClientConfig.appId
+].every(Boolean));
 const featuredFreeModelIds = [
   'cohere/north-mini-code:free',
   'poolside/laguna-s-2.1:free',
@@ -74,6 +104,101 @@ async function readJson(request) {
   }
 }
 
+async function requireFirebaseUser(request) {
+  const authorization = request.headers.authorization || '';
+  const token = authorization.match(/^Bearer (.+)$/i)?.[1];
+  if (!token || !firebaseAdminApp) throw new Error('Sign in with Google to continue.');
+  return getFirebaseAuth(firebaseAdminApp).verifyIdToken(token);
+}
+
+function prepareConversation(conversation) {
+  if (!conversation || typeof conversation.id !== 'string' || !/^[\w-]{1,80}$/.test(conversation.id)
+    || typeof conversation.title !== 'string' || !Array.isArray(conversation.messages)
+    || conversation.messages.length > 500) {
+    throw new Error('Conversation data is not valid.');
+  }
+
+  const messages = conversation.messages.map((message) => {
+    if (!message || !['user', 'assistant'].includes(message.role) || typeof message.content !== 'string'
+      || message.content.length > 4000
+      || (message.attachments !== undefined && (!Array.isArray(message.attachments) || message.attachments.length > 20))) {
+      throw new Error('Conversation message is not valid.');
+    }
+    if (message.attachments?.some((attachment) => attachment?.kind === 'pdf')) return null;
+    const attachments = (message.attachments || []).map((attachment) => {
+      if (!attachment || typeof attachment.name !== 'string' || typeof attachment.id !== 'string') {
+        throw new Error('Conversation attachment is not valid.');
+      }
+      if (attachment.kind === 'image') {
+        return { id: attachment.id.slice(0, 80), kind: 'image', name: attachment.name.slice(0, 160) };
+      }
+      if (attachment.kind === 'text' && typeof attachment.text === 'string'
+        && Buffer.byteLength(attachment.text, 'utf8') <= maxTextAttachmentBytes) {
+        return { id: attachment.id.slice(0, 80), kind: 'text', name: attachment.name.slice(0, 160), text: attachment.text };
+      }
+      throw new Error('Conversation attachment is not valid.');
+    });
+    return { role: message.role, content: message.content, ...(attachments.length ? { attachments } : {}) };
+  }).filter(Boolean);
+
+  const result = {
+    id: conversation.id,
+    title: conversation.title.slice(0, 200),
+    messages,
+    updatedAt: Number.isFinite(conversation.updatedAt) ? conversation.updatedAt : Date.now()
+  };
+  if (Buffer.byteLength(JSON.stringify(result), 'utf8') > 900 * 1024) {
+    throw new Error('This conversation is too large to save to Firebase.');
+  }
+  return result;
+}
+
+async function handleConversations(request, response) {
+  if (!firebaseEnabled) return sendJson(response, 503, { error: 'Firebase sign-in and database are not configured.' });
+
+  let user;
+  try {
+    user = await requireFirebaseUser(request);
+  } catch {
+    return sendJson(response, 401, { error: 'Sign in with Google to access your conversations.' });
+  }
+
+  const collection = getFirestore(firebaseAdminApp).collection('users').doc(user.uid).collection('conversations');
+  try {
+    if (request.method === 'GET') {
+      const snapshot = await collection.orderBy('updatedAt', 'desc').limit(100).get();
+      return sendJson(response, 200, { conversations: snapshot.docs.map((document) => document.data()) });
+    }
+
+    let payload;
+    try {
+      payload = await readJson(request);
+    } catch (error) {
+      return sendJson(response, error.statusCode || 400, { error: error.message });
+    }
+    if (!Array.isArray(payload.conversations) || payload.conversations.length > 100) {
+      return sendJson(response, 400, { error: 'Save up to 100 conversations at a time.' });
+    }
+    const conversations = payload.conversations.map(prepareConversation);
+    if (new Set(conversations.map((conversation) => conversation.id)).size !== conversations.length) {
+      return sendJson(response, 400, { error: 'Conversation IDs must be unique.' });
+    }
+
+    const existing = await collection.get();
+    const keepIds = new Set(conversations.map((conversation) => conversation.id));
+    const batch = getFirestore(firebaseAdminApp).batch();
+    existing.docs.filter((document) => !keepIds.has(document.id)).forEach((document) => batch.delete(document.ref));
+    conversations.forEach((conversation) => batch.set(collection.doc(conversation.id), conversation));
+    await batch.commit();
+    return sendJson(response, 200, { saved: conversations.length });
+  } catch (error) {
+    console.error('Firebase conversation request failed:', error.name || 'UnknownError');
+    return sendJson(response, 500, { error: error.message === 'This conversation is too large to save to Firebase.'
+      ? error.message
+      : 'Could not load or save conversations. Try again shortly.' });
+  }
+}
+
 async function getFeaturedFreeModels() {
   if (modelCatalogCache.models && modelCatalogCache.expiresAt > Date.now()) return modelCatalogCache.models;
   const response = await fetch(`${apiBaseUrl}/models`, {
@@ -104,6 +229,13 @@ async function getFeaturedFreeModels() {
 }
 
 async function handleChat(request, response) {
+  if (firebaseEnabled) {
+    try {
+      await requireFirebaseUser(request);
+    } catch {
+      return sendJson(response, 401, { error: 'Sign in with Google before sending a message.' });
+    }
+  }
   if (usesOpenRouter && !apiKey) {
     return sendJson(response, 503, { error: 'Set AI_API_KEY in .env or .env.local, then restart the server.' });
   }
@@ -244,7 +376,7 @@ async function handleChat(request, response) {
           ? (payload.modelId ? selectedModel : visionModel)
           : (payload.modelId ? selectedModel : model),
         temperature: 0.4,
-        max_tokens: 900,
+        max_tokens: 2000,
         messages: [
           {
             role: 'system',
@@ -316,7 +448,7 @@ async function handleStatic(pathname, response) {
     response.writeHead(200, {
       'content-type': contentTypes[path.extname(filePath)] || 'application/octet-stream',
       'x-content-type-options': 'nosniff',
-      'content-security-policy': "default-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self'; img-src 'self' data:",
+      'content-security-policy': "default-src 'self'; script-src 'self' https://www.gstatic.com; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self' https://*.googleapis.com; frame-src https://*.firebaseapp.com https://accounts.google.com; img-src 'self' data:",
       'referrer-policy': 'no-referrer'
     });
     response.end(content);
@@ -327,6 +459,15 @@ async function handleStatic(pathname, response) {
 
 const server = createServer(async (request, response) => {
   const url = new URL(request.url, `http://${request.headers.host || 'localhost'}`);
+  if (request.method === 'GET' && url.pathname === '/api/config') {
+    return sendJson(response, 200, {
+      firebaseEnabled,
+      firebaseConfig: firebaseEnabled ? firebaseClientConfig : null
+    });
+  }
+  if ((request.method === 'GET' || request.method === 'PUT') && url.pathname === '/api/conversations') {
+    return handleConversations(request, response);
+  }
   if (request.method === 'GET' && url.pathname === '/api/models') {
     if (!usesOpenRouter) {
       return sendJson(response, 400, { error: 'Free OpenRouter model selection is only available with the OpenRouter API.' });
@@ -339,7 +480,7 @@ const server = createServer(async (request, response) => {
     }
   }
   if (request.method === 'GET' && url.pathname === '/api/status') {
-    return sendJson(response, 200, { configured: !usesOpenRouter || Boolean(apiKey), model });
+    return sendJson(response, 200, { configured: !usesOpenRouter || Boolean(apiKey), model, firebaseEnabled });
   }
   if (request.method === 'POST' && url.pathname === '/api/chat') {
     return handleChat(request, response);

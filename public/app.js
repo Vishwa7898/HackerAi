@@ -12,15 +12,23 @@ const newChatButton = document.querySelector('#new-chat-button');
 const connection = document.querySelector('#connection-status');
 const connectionLabel = document.querySelector('#connection-label');
 const modelSelect = document.querySelector('#model-select');
+const authButton = document.querySelector('#auth-button');
+const accountAvatar = document.querySelector('#account-avatar');
 const toast = document.querySelector('#toast');
 const storageKey = 'hackerai-chat-history';
 const modelStorageKey = 'hackerai-model';
 let toastTimer;
 let availableModels = [];
+let firebaseEnabled = false;
+let firebaseAuth = null;
+let firebaseUser = null;
+let firebaseSyncEnabled = false;
+let firebaseSaveTimer;
+let authChangeId = 0;
 
-function loadConversations() {
+function loadConversations(key = storageKey) {
   try {
-    const saved = JSON.parse(localStorage.getItem(storageKey) || '[]');
+    const saved = JSON.parse(localStorage.getItem(key) || '[]');
     if (!Array.isArray(saved)) throw new Error('Saved chat history has an invalid format.');
     return saved.filter((conversation) =>
       conversation
@@ -76,7 +84,9 @@ function saveConversations() {
       ...conversation,
       messages: conversation.messages.filter((message) => !message.attachments?.some((attachment) => attachment.kind === 'pdf'))
     }));
-    localStorage.setItem(storageKey, JSON.stringify(savedConversations));
+    const key = firebaseUser ? `${storageKey}-${firebaseUser.uid}` : storageKey;
+    localStorage.setItem(key, JSON.stringify(savedConversations));
+    if (firebaseUser) scheduleFirebaseSave();
     return true;
   } catch (error) {
     showToast(`Could not save chat history: ${error.message}`);
@@ -86,6 +96,141 @@ function saveConversations() {
 
 function activeConversation() {
   return conversations.find((conversation) => conversation.id === activeConversationId) || null;
+}
+
+async function firebaseFetch(url, options = {}, user = firebaseUser) {
+  const headers = new Headers(options.headers || {});
+  if (user) headers.set('authorization', `Bearer ${await user.getIdToken()}`);
+  const response = await fetch(url, { ...options, headers });
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.error || 'Firebase request failed.');
+  return result;
+}
+
+function scheduleFirebaseSave() {
+  clearTimeout(firebaseSaveTimer);
+  if (!firebaseSyncEnabled) return;
+  firebaseSaveTimer = setTimeout(async () => {
+    const user = firebaseUser;
+    if (!user) return;
+    try {
+      const savedConversations = conversations
+        .map((conversation) => ({
+          ...conversation,
+          messages: conversation.messages.filter((message) => !message.attachments?.some((attachment) => attachment.kind === 'pdf'))
+        }))
+        .slice(0, 100);
+      await firebaseFetch('/api/conversations', {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ conversations: savedConversations })
+      }, user);
+    } catch (error) {
+      firebaseSyncEnabled = false;
+      showToast(`Could not sync conversations: ${error.message}`);
+    }
+  }, 500);
+}
+
+function getGoogleSignInError(error) {
+  if (error.code === 'auth/operation-not-allowed') {
+    return 'Enable Google under Firebase Console > Authentication > Sign-in method.';
+  }
+  if (error.code === 'auth/unauthorized-domain') {
+    return 'Add this site to Firebase Console > Authentication > Settings > Authorized domains.';
+  }
+  if (error.code === 'auth/popup-blocked') {
+    return 'Allow popups for this site, then try Google sign-in again.';
+  }
+  return error.message || 'Google sign-in failed.';
+}
+
+async function initializeFirebase() {
+  try {
+    const response = await fetch('/api/config');
+    const config = await response.json();
+    if (!response.ok) throw new Error(config.error || 'Could not load sign-in configuration.');
+    if (!config.firebaseEnabled) return;
+    if (!window.firebase?.auth) throw new Error('Firebase sign-in could not be loaded. Check your connection.');
+
+    firebaseEnabled = true;
+    firebase.initializeApp(config.firebaseConfig);
+    if (config.firebaseConfig.measurementId && window.firebase.analytics) {
+      try {
+        firebase.analytics();
+      } catch (error) {
+        console.warn('Firebase Analytics is unavailable in this browser.');
+      }
+    }
+    firebaseAuth = firebase.auth();
+    authButton.hidden = false;
+    authButton.addEventListener('click', async () => {
+      authButton.disabled = true;
+      try {
+        if (firebaseUser) {
+          await firebaseAuth.signOut();
+        } else {
+          await firebaseAuth.signInWithPopup(new firebase.auth.GoogleAuthProvider());
+        }
+      } catch (error) {
+        showToast(getGoogleSignInError(error));
+      } finally {
+        authButton.disabled = false;
+      }
+    });
+
+    firebaseAuth.onAuthStateChanged(async (user) => {
+      const changeId = ++authChangeId;
+      clearTimeout(firebaseSaveTimer);
+      firebaseUser = user;
+      authButton.textContent = user ? 'Sign out' : 'Sign in with Google';
+      authButton.title = user?.displayName || 'Sign in with Google';
+      accountAvatar.textContent = user?.displayName?.trim()?.[0]?.toUpperCase() || 'L';
+      accountAvatar.title = user?.email || 'Learner';
+      authButton.disabled = true;
+      try {
+        if (user) {
+          const previousActiveId = activeConversationId;
+          const accountConversations = loadConversations(`${storageKey}-${user.uid}`);
+          let cloudConversations = [];
+          try {
+            const cloudData = await firebaseFetch('/api/conversations', {}, user);
+            cloudConversations = cloudData.conversations;
+            firebaseSyncEnabled = true;
+          } catch (error) {
+            firebaseSyncEnabled = false;
+            if (changeId === authChangeId) {
+              showToast(`Signed in with Google. Cloud history is unavailable: ${error.message}`);
+            }
+          }
+          if (changeId !== authChangeId) return;
+          const anonymousConversations = loadConversations();
+          const merged = new Map();
+          [...anonymousConversations, ...accountConversations, ...cloudConversations].forEach((conversation) => {
+            merged.set(conversation.id, conversation);
+          });
+          conversations = [...merged.values()].sort((first, second) => second.updatedAt - first.updatedAt).slice(0, 100);
+          activeConversationId = conversations.some((conversation) => conversation.id === previousActiveId)
+            ? previousActiveId
+            : conversations[0]?.id || null;
+          if (anonymousConversations.length) localStorage.removeItem(storageKey);
+          saveConversations();
+        } else {
+          firebaseSyncEnabled = false;
+          conversations = loadConversations();
+          activeConversationId = conversations[0]?.id || null;
+        }
+        renderConversation();
+      } catch (error) {
+        if (changeId === authChangeId) showToast(error.message);
+      } finally {
+        if (changeId === authChangeId) authButton.disabled = false;
+      }
+    });
+  } catch (error) {
+    console.error('Firebase setup failed:', error.name || 'UnknownError');
+    showToast(error.message);
+  }
 }
 
 function renderHistory() {
@@ -429,6 +574,10 @@ async function prepareFile(file) {
 async function sendMessage(value) {
   const content = value.trim();
   if ((!content && !selectedAttachments.length) || isSending) return;
+  if (firebaseEnabled && !firebaseUser) {
+    showToast('Sign in with Google before sending a message.');
+    return;
+  }
   if (!modelSelect.value) {
     showToast('Wait for the free model list to load before sending a message.');
     return;
@@ -480,7 +629,10 @@ async function sendMessage(value) {
   try {
     const response = await fetch('/api/chat', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: {
+        'content-type': 'application/json',
+        ...(firebaseUser ? { authorization: `Bearer ${await firebaseUser.getIdToken()}` } : {})
+      },
       body: JSON.stringify({ messages: conversation.messages, modelId: modelSelect.value })
     });
     const result = await response.json();
@@ -586,6 +738,7 @@ newChatButton.addEventListener('click', () => {
 });
 
 renderConversation();
+initializeFirebase();
 
 fetch('/api/models')
   .then(async (response) => {

@@ -94,6 +94,9 @@ button { color: inherit; }
 .connection.ready .connection-dot { background: #33a36e; box-shadow: 0 0 0 3px rgb(51 163 110 / 12%); }
 .connection.error .connection-dot { background: var(--orange); }
 .avatar { display: grid; width: 29px; height: 29px; place-items: center; border: 1px solid #d2d9d1; border-radius: 50%; color: var(--green); font-family: var(--mono); font-size: 11px; }
+.auth-button { min-height: 32px; padding: 0 10px; border: 1px solid #cbd6cc; border-radius: 5px; color: var(--green-deep); background: var(--white); font-size: 11px; font-weight: 700; cursor: pointer; }
+.auth-button:hover { border-color: var(--green); }
+.auth-button:disabled { opacity: .6; cursor: wait; }
 
 .workspace { display: flex; width: min(100%, 1020px); min-height: 0; flex: 1; flex-direction: column; align-self: center; padding: 0 42px; }
 .conversation { min-height: 0; flex: 1; overflow-y: auto; }
@@ -191,6 +194,7 @@ h1 span { color: var(--green); }
   .connection { font-size: 0; }
   .connection-dot { width: 8px; height: 8px; }
   .avatar { width: 25px; height: 25px; }
+  .auth-button { min-height: 29px; padding: 0 7px; font-size: 9px; }
   .workspace { width: 100%; padding: 0 17px; }
   .welcome { margin: 37px auto 22px; }
   h1 { font-size: 42px; }
