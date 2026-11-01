@@ -132,6 +132,24 @@ function scheduleFirebaseSave() {
   }, 500);
 }
 
+async function logFirebaseAuthError(error) {
+  const report = {
+    source: 'firebase-auth',
+    code: typeof error?.code === 'string' ? error.code.slice(0, 100) : 'auth/unknown',
+    message: typeof error?.message === 'string' ? error.message.slice(0, 500) : 'No error message provided.'
+  };
+  console.error('Firebase sign-in failed:', { code: report.code, message: report.message });
+  try {
+    await fetch('/api/client-error', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(report)
+    });
+  } catch {
+    console.warn('Could not send Firebase sign-in error to the server terminal.');
+  }
+}
+
 function getGoogleSignInError(error) {
   if (error.code === 'auth/operation-not-allowed') {
     return 'Enable Google under Firebase Console > Authentication > Sign-in method.';
@@ -173,6 +191,7 @@ async function initializeFirebase() {
           await firebaseAuth.signInWithPopup(new firebase.auth.GoogleAuthProvider());
         }
       } catch (error) {
+        void logFirebaseAuthError(error);
         showToast(getGoogleSignInError(error));
       } finally {
         authButton.disabled = false;

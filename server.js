@@ -89,11 +89,11 @@ function sendJson(response, statusCode, data) {
   response.end(JSON.stringify(data));
 }
 
-async function readJson(request) {
+async function readJson(request, maxBytes = maxBodyBytes) {
   let body = '';
   for await (const chunk of request) {
     body += chunk;
-    if (Buffer.byteLength(body) > maxBodyBytes) {
+    if (Buffer.byteLength(body) > maxBytes) {
       throw Object.assign(new Error('Request is too large.'), { statusCode: 413 });
     }
   }
@@ -448,7 +448,7 @@ async function handleStatic(pathname, response) {
     response.writeHead(200, {
       'content-type': contentTypes[path.extname(filePath)] || 'application/octet-stream',
       'x-content-type-options': 'nosniff',
-      'content-security-policy': "default-src 'self'; script-src 'self' https://www.gstatic.com; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self' https://*.googleapis.com; frame-src https://*.firebaseapp.com https://accounts.google.com; img-src 'self' data:",
+      'content-security-policy': "default-src 'self'; script-src 'self' https://www.gstatic.com https://apis.google.com; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self' https://*.googleapis.com; frame-src https://*.firebaseapp.com https://accounts.google.com; img-src 'self' data:",
       'referrer-policy': 'no-referrer'
     });
     response.end(content);
@@ -459,6 +459,27 @@ async function handleStatic(pathname, response) {
 
 const server = createServer(async (request, response) => {
   const url = new URL(request.url, `http://${request.headers.host || 'localhost'}`);
+  if (request.method === 'POST' && url.pathname === '/api/client-error') {
+    const origin = request.headers.origin;
+    if (!origin || new URL(origin).host !== request.headers.host) {
+      return sendJson(response, 403, { error: 'Same-origin requests only.' });
+    }
+    try {
+      const report = await readJson(request, 2048);
+      if (report.source !== 'firebase-auth' || typeof report.code !== 'string'
+        || !/^auth\/[a-z0-9-]{1,80}$/i.test(report.code)
+        || typeof report.message !== 'string') {
+        return sendJson(response, 400, { error: 'Invalid client error report.' });
+      }
+      const message = report.message.slice(0, 500)
+        .replace(/AIza[0-9A-Za-z_-]{20,}/g, '[REDACTED_API_KEY]')
+        .replace(/Bearer\s+\S+/gi, 'Bearer [REDACTED]');
+      console.error('Firebase sign-in error:', JSON.stringify({ code: report.code, message }));
+      return sendJson(response, 200, { logged: true });
+    } catch (error) {
+      return sendJson(response, error.statusCode || 400, { error: error.message || 'Invalid client error report.' });
+    }
+  }
   if (request.method === 'GET' && url.pathname === '/api/config') {
     return sendJson(response, 200, {
       firebaseEnabled,
